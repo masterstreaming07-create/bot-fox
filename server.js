@@ -6,7 +6,6 @@ const PORT = 3000;
 
 // Función para raspar el código de Yopmail
 async function obtenerCodigoFox(correoCompleto) {
-  // Extraer solo el usuario antes del @ (ej: 'juanito' si es juanito@yopmail.com)
   const usuario = correoCompleto.split('@')[0];
   
   let browser = null;
@@ -34,11 +33,24 @@ async function obtenerCodigoFox(correoCompleto) {
     // 3. Extraer el texto completo del cuerpo del correo
     const contenido = await mailFrame.evaluate(() => document.body.innerText);
 
-    // 4. Buscar un código numérico común de Fox (habitualmente de 4 a 6 dígitos)
-    const match = contenido.match(/\b\d{4,6}\b/);
+    // 4. Búsqueda prioritaria: número de 4 a 6 dígitos cerca de la palabra "código" o "code"
+    let match = contenido.match(/(?:c[oó]digo|code)[^\d\n\r]{0,30}(\b\d{4,6}\b)/i);
+    let codigoEncontrado = match ? match[1] : null;
 
-    if (match) {
-      return { ok: true, code: match[0] };
+    // 5. Si no vino con la palabra "código", buscar todos los números de 4 a 6 dígitos ignorando años
+    if (!codigoEncontrado) {
+      const todosLosNumeros = contenido.match(/\b\d{4,6}\b/g) || [];
+      const añosAIgnorar = ["2023", "2024", "2025", "2026", "2027"];
+      
+      // Filtrar números que no sean años comunes
+      const candidatos = todosLosNumeros.filter(num => !añosAIgnorar.includes(num));
+      if (candidatos.length > 0) {
+        codigoEncontrado = candidatos[0];
+      }
+    }
+
+    if (codigoEncontrado) {
+      return { ok: true, code: codigoEncontrado };
     } else {
       return { ok: false, error: "No se encontró ningún código reciente en el correo de Fox." };
     }
@@ -50,7 +62,7 @@ async function obtenerCodigoFox(correoCompleto) {
   }
 }
 
-// Endpoint local para que Apps Script consulte el código
+// Endpoint para que Apps Script consulte el código
 app.get('/codigo-fox', async (req, res) => {
   const email = req.query.email;
   if (!email) {
