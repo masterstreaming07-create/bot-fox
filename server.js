@@ -12,43 +12,33 @@ app.get('/codigo-fox', async (req, res) => {
 
   try {
     let codigoEncontrado = null;
-    let correoCrudo = "";
 
-    // Bucle de 5 intentos esperando a que Fox envíe el correo
+    // Bucle de 5 intentos (hasta 20 segundos) esperando el código
     for (let i = 0; i < 5; i++) {
         let latestMail = null;
         try { latestMail = await getLatestMailByEmailAddress(usuario); } catch(err) {}
 
         if (latestMail) {
-            // Convertimos TODO el objeto del correo a texto puro
-            correoCrudo = JSON.stringify(latestMail);
+            // Convertimos todo el correo a texto
+            const correoCrudo = JSON.stringify(latestMail);
 
-            // Si es el correo de bienvenida de Yopmail, lo ignoramos
-            if (correoCrudo.toLowerCase().includes("yopmail")) {
-                await new Promise(r => setTimeout(r, 4000));
-                continue;
-            }
-
-            // CAZADOR EXACTO: Buscamos 6 números juntos en cualquier parte del código
+            // CAZADOR EXACTO: Buscamos 6 números seguidos
             const matchNumeros = correoCrudo.match(/\b\d{6}\b/g);
 
             if (matchNumeros && matchNumeros.length > 0) {
                 codigoEncontrado = matchNumeros[0];
-                break;
+                break; // ¡Lo encontró! Salimos del bucle.
             }
         }
         
+        // Si no encontró el código (porque era la bienvenida o no ha llegado), espera 4 segundos
         if (i < 4) await new Promise(r => setTimeout(r, 4000));
     }
 
     if (codigoEncontrado) {
         return res.json({ ok: true, code: codigoEncontrado });
     } else {
-        if (correoCrudo === "" || correoCrudo.toLowerCase().includes("yopmail")) {
-             return res.json({ ok: false, error: "📭 Aún no llega el correo de Fox. (Solicítalo de nuevo)." });
-        }
-        // Si fallara, nos escupirá el texto puro para ver en qué formato extraño llegó
-        return res.json({ ok: false, error: "👁️ Correo sin 6 dígitos. Datos: " + correoCrudo.substring(0, 100) });
+        return res.json({ ok: false, error: "📭 Aún no llega el correo de Fox. (Solicítalo de nuevo)." });
     }
 
   } catch (err) {
@@ -56,4 +46,4 @@ app.get('/codigo-fox', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Servidor Fox corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`Servidor Fox API corriendo en puerto ${PORT}`));
