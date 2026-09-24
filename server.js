@@ -11,40 +11,58 @@ app.get('/codigo-fox', async (req, res) => {
   const usuario = email.split('@')[0];
 
   try {
-    const latestMail = await getLatestMailByEmailAddress(usuario);
-    
-    if (!latestMail) {
-      return res.json({ ok: false, error: "📭 Aún no llega el correo a Yopmail. Espera unos segundos y vuelve a presionar." });
-    }
-
-    // TRUCO MAESTRO: Convertimos TODO el correo (asunto, cuerpo, HTML, todo) a texto puro.
-    const contenidoCrudo = JSON.stringify(latestMail);
-    // Limpiamos etiquetas HTML, saltos de línea y comillas para que los números queden expuestos
-    const contenidoLimpio = contenidoCrudo.replace(/<[^>]+>/g, ' ').replace(/[\\n\\r"'{}]/g, ' ');
-
     let codigoEncontrado = null;
-    
-    // 1. Buscamos números de 4 a 8 dígitos en todo el correo
-    const todosLosNumeros = contenidoLimpio.match(/\b\d{4,8}\b/g) || [];
-    const aIgnorar = ["2023", "2024", "2025", "2026", "2027", "2028"];
-    
-    const candidatosNumeros = todosLosNumeros.filter(num => !aIgnorar.includes(num));
-    
-    if (candidatosNumeros.length > 0) {
-        codigoEncontrado = candidatosNumeros[0];
-    } else {
-        // 2. Soporte extra: Si Fox One envió un código de letras y números (ej. A1B2C3)
-        let matchAlfa = contenidoLimpio.match(/\b[A-Z0-9]{5,8}\b/g) || [];
-        if(matchAlfa.length > 0) {
-            codigoEncontrado = matchAlfa[0];
+    let tituloCorreo = "Desconocido";
+
+    // Bucle de paciencia: 5 intentos (hasta 20 segundos) esperando a Fox
+    for (let i = 0; i < 5; i++) {
+        let latestMail = null;
+        try {
+            latestMail = await getLatestMailByEmailAddress(usuario);
+        } catch(err) {
+            // Ignoramos micro-cortes de conexión
+        }
+        
+        if (latestMail) {
+            tituloCorreo = latestMail.title || latestMail.subject || "Sin asunto";
+            const contenidoCrudo = JSON.stringify(latestMail);
+            const contenidoLimpio = contenidoCrudo.replace(/<[^>]+>/g, ' ').replace(/[\\n\\r"'{}]/g, ' ');
+
+            // Buscamos el código
+            const todosLosNumeros = contenidoLimpio.match(/\b\d{4,8}\b/g) || [];
+            const aIgnorar = ["2023", "2024", "2025", "2026", "2027", "2028"];
+            const candidatosNumeros = todosLosNumeros.filter(num => !aIgnorar.includes(num));
+            
+            let matchEspecial = contenidoLimpio.match(/(?:c[oó]digo|code|pin)[^\d\n\r]{0,30}(\b\d{4,6}\b)/i);
+            
+            if (matchEspecial) {
+                codigoEncontrado = matchEspecial[1];
+            } else if (candidatosNumeros.length > 0) {
+                codigoEncontrado = candidatosNumeros[0];
+            }
+
+            // TRUCO: Si vemos el correo de Bienvenida de Yopmail, lo ignoramos y seguimos esperando
+            if (codigoEncontrado && !tituloCorreo.toLowerCase().includes("yopmail")) {
+                break; // ¡Llegó el correo de Fox! Salimos del bucle.
+            } else {
+                codigoEncontrado = null; 
+            }
+        }
+
+        // Si no ha llegado, esperamos 4 segundos antes de volver a revisar la bandeja
+        if (i < 4) {
+            await new Promise(r => setTimeout(r, 4000));
         }
     }
 
     if (codigoEncontrado) {
         return res.json({ ok: true, code: codigoEncontrado });
     } else {
-        let asunto = latestMail.subject || "Sin asunto";
-        return res.json({ ok: false, error: "👁️ Correo leído sin código. Asunto: " + asunto });
+        // Si pasaron los 20 segundos y Fox nunca mandó el correo
+        if (tituloCorreo.toLowerCase().includes("yopmail")) {
+             return res.json({ ok: false, error: "📭 Aún no llega el correo de Fox a la bandeja. Intenta de nuevo." });
+        }
+        return res.json({ ok: false, error: "👁️ Correo leído sin código. Título: " + tituloCorreo.substring(0, 30) });
     }
 
   } catch (err) {
