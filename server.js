@@ -13,6 +13,7 @@ app.get('/codigo-fox', async (req, res) => {
   try {
     let codigoEncontrado = null;
     let tituloCorreo = "Desconocido";
+    let textoParaMostrar = "";
 
     // Bucle de paciencia: 5 intentos esperando a Fox
     for (let i = 0; i < 5; i++) {
@@ -22,11 +23,12 @@ app.get('/codigo-fox', async (req, res) => {
         if (latestMail) {
             tituloCorreo = latestMail.title || latestMail.subject || "Sin asunto";
             
-            // SOLUCIÓN: Solo juntamos el título y el cuerpo real del mensaje (sin leer las tripas JSON)
-            const contenidoCrudo = tituloCorreo + " " + (latestMail.body || "");
+            // SOLUCIÓN: Sumamos el Asunto + Cuerpo de texto + Cuerpo HTML (Aquí suele esconderse el código)
+            const contenidoCrudo = tituloCorreo + " " + (latestMail.body || "") + " " + (latestMail.html || "");
             
-            // Limpiamos etiquetas HTML
+            // Limpiamos etiquetas HTML para que solo queden letras y números
             const contenidoLimpio = contenidoCrudo.replace(/<[^>]+>/g, ' ').replace(/[^\w\s]/g, ' ');
+            textoParaMostrar = contenidoLimpio;
 
             // Buscamos estrictamente números de 4 a 8 dígitos
             const todosLosNumeros = contenidoLimpio.match(/\b\d{4,8}\b/g) || [];
@@ -37,7 +39,7 @@ app.get('/codigo-fox', async (req, res) => {
                 codigoEncontrado = candidatosNumeros[0];
             }
 
-            // Si encontró un número y no es la bienvenida de Yopmail, lo tenemos
+            // Si encontró un número y no es la bienvenida de Yopmail
             if (codigoEncontrado && !tituloCorreo.toLowerCase().includes("yopmail")) {
                 break; 
             } else {
@@ -54,7 +56,8 @@ app.get('/codigo-fox', async (req, res) => {
         if (tituloCorreo.toLowerCase().includes("yopmail")) {
              return res.json({ ok: false, error: "📭 Aún no llega el correo de Fox. Intenta de nuevo." });
         }
-        return res.json({ ok: false, error: "👁️ Correo leído sin código. Revisa tu panel para más detalles." });
+        // AQUI ESTÁ EL TRUCO: Nos mostrará las palabras reales del correo
+        return res.json({ ok: false, error: "👁️ Texto: " + textoParaMostrar.substring(0, 100) });
     }
 
   } catch (err) {
