@@ -2,7 +2,6 @@ const express = require('express');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 
-// Activamos el modo sigilo para evadir Cloudflare y Captchas
 puppeteer.use(StealthPlugin());
 
 const app = express();
@@ -18,23 +17,38 @@ async function obtenerCodigoFox(correoCompleto) {
       args: [
         '--no-sandbox', 
         '--disable-setuid-sandbox',
-        '--disable-web-security',
-        '--disable-features=IsolateOrigins,site-per-process'
+        '--disable-blink-features=AutomationControlled',
+        '--window-size=1280,800'
       ]
     });
 
     const page = await browser.newPage();
-    // Simulamos ser un navegador común
+    await page.setViewport({ width: 1280, height: 800 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-    await page.goto(`https://yopmail.com/es/?login=${usuario}`, { waitUntil: 'networkidle2' });
+    // 1. Entramos a la página principal (la "puerta delantera") para que Cloudflare no sospeche
+    await page.goto('https://yopmail.com/es/', { waitUntil: 'domcontentloaded' });
     
-    // Le damos 5 segundos fijos para que el escudo Stealth resuelva el Captcha si aparece
-    await new Promise(r => setTimeout(r, 5000));
+    // 2. Esperamos hasta 10 segundos a que pase la pantalla de Cloudflare y cargue la caja
+    try {
+        await page.waitForSelector('#login', { timeout: 10000 });
+    } catch(e) {
+        return { ok: false, error: "⛔ Cloudflare bloqueó la IP de Render desde la página principal." };
+    }
+
+    // 3. Simulación humana: Hacemos clic, vaciamos la caja, y tecleamos LETRA POR LETRA
+    await page.click('#login');
+    // Borramos por si hay texto
+    await page.evaluate(() => document.getElementById('login').value = '');
+    await page.type('#login', usuario, { delay: 100 }); // 100 milisegundos entre cada letra
+    await page.keyboard.press('Enter');
+
+    // 4. Damos 4 segundos para que cargue la bandeja de entrada
+    await new Promise(r => setTimeout(r, 4000));
 
     const mailFrameElement = await page.$('#ifmail');
     if (!mailFrameElement) {
-        return { ok: false, error: "⚠️ La bandeja no cargó. Yopmail está tardando demasiado." };
+        return { ok: false, error: "⚠️ No se pudo abrir la bandeja de entrada de Yopmail." };
     }
 
     const mailFrame = await mailFrameElement.contentFrame();
@@ -44,11 +58,7 @@ async function obtenerCodigoFox(correoCompleto) {
         return { ok: false, error: "📭 Aún no llega el correo a Yopmail. Espera unos segundos y vuelve a presionar." };
     }
 
-    // Si aún sale el Captcha
-    if (contenido.toLowerCase().includes("captcha") || contenido.toLowerCase().includes("cloudflare")) {
-        return { ok: false, error: "⛔ El Captcha de Yopmail fue demasiado fuerte esta vez. Intenta de nuevo." };
-    }
-
+    // 5. Buscar código
     let codigoEncontrado = null;
     let matchEspecial = contenido.match(/(?:c[oó]digo|code|pin)[^\d\n\r]{0,30}(\b\d{4,6}\b)/i);
     
