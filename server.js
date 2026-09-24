@@ -1,64 +1,34 @@
 const express = require('express');
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-
-puppeteer.use(StealthPlugin());
+const { getLatestMailByEmailAddress } = require('yopmail-helper');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-async function obtenerCodigoFox(correoCompleto) {
-  const usuario = correoCompleto.split('@')[0];
-  let browser = null;
+app.get('/codigo-fox', async (req, res) => {
+  const email = req.query.email;
+  if (!email) return res.status(400).json({ ok: false, error: "Falta el correo" });
   
+  // Yopmail solo necesita la parte antes del @
+  const usuario = email.split('@')[0];
+
   try {
-    browser = await puppeteer.launch({
-      headless: "new",
-      args: [
-        '--no-sandbox', 
-        '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled',
-        '--window-size=1280,800'
-      ]
-    });
-
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
-    // 1. Entramos a la página principal (la "puerta delantera") para que Cloudflare no sospeche
-    await page.goto('https://yopmail.com/es/', { waitUntil: 'domcontentloaded' });
+    console.log(`[FOX] Buscando en API Yopmail para: ${usuario}`);
     
-    // 2. Esperamos hasta 10 segundos a que pase la pantalla de Cloudflare y cargue la caja
-    try {
-        await page.waitForSelector('#login', { timeout: 10000 });
-    } catch(e) {
-        return { ok: false, error: "⛔ Cloudflare bloqueó la IP de Render desde la página principal." };
+    // Entramos por la puerta trasera (API) sin levantar el Captcha
+    const latestMail = await getLatestMailByEmailAddress(usuario);
+    
+    if (!latestMail) {
+      return res.json({ ok: false, error: "📭 Aún no llega el correo a Yopmail. Espera unos segundos y vuelve a presionar." });
     }
 
-    // 3. Simulación humana: Hacemos clic, vaciamos la caja, y tecleamos LETRA POR LETRA
-    await page.click('#login');
-    // Borramos por si hay texto
-    await page.evaluate(() => document.getElementById('login').value = '');
-    await page.type('#login', usuario, { delay: 100 }); // 100 milisegundos entre cada letra
-    await page.keyboard.press('Enter');
+    // Unimos el cuerpo y el resumen del correo para asegurar que encontremos el código
+    const contenido = (latestMail.body || "") + " " + (latestMail.summary || "");
 
-    // 4. Damos 4 segundos para que cargue la bandeja de entrada
-    await new Promise(r => setTimeout(r, 4000));
-
-    const mailFrameElement = await page.$('#ifmail');
-    if (!mailFrameElement) {
-        return { ok: false, error: "⚠️ No se pudo abrir la bandeja de entrada de Yopmail." };
+    if (!contenido || contenido.trim() === "") {
+        return res.json({ ok: false, error: "⚠️ El correo llegó pero está vacío." });
     }
 
-    const mailFrame = await mailFrameElement.contentFrame();
-    const contenido = await mailFrame.evaluate(() => document.body.innerText);
-
-    if (!contenido || contenido.trim() === "" || contenido.toLowerCase().includes("vacío") || contenido.toLowerCase().includes("empty")) {
-        return { ok: false, error: "📭 Aún no llega el correo a Yopmail. Espera unos segundos y vuelve a presionar." };
-    }
-
-    // 5. Buscar código
+    // Buscamos el código
     let codigoEncontrado = null;
     let matchEspecial = contenido.match(/(?:c[oó]digo|code|pin)[^\d\n\r]{0,30}(\b\d{4,6}\b)/i);
     
@@ -71,23 +41,14 @@ async function obtenerCodigoFox(correoCompleto) {
     }
 
     if (codigoEncontrado) {
-        return { ok: true, code: codigoEncontrado };
+        return res.json({ ok: true, code: codigoEncontrado });
     } else {
-        return { ok: false, error: "👁️ Correo leído pero sin código numérico. Dice: " + contenido.substring(0, 80).replace(/\n/g, ' ') };
+        return res.json({ ok: false, error: "👁️ Correo leído sin código numérico. Dice: " + contenido.substring(0, 80) });
     }
 
   } catch (err) {
-    return { ok: false, error: "🔥 Error en Render: " + err.message };
-  } finally {
-    if (browser) await browser.close();
+    return res.json({ ok: false, error: "🔥 Error en API Yopmail: " + err.message });
   }
-}
-
-app.get('/codigo-fox', async (req, res) => {
-  const email = req.query.email;
-  if (!email) return res.status(400).json({ ok: false, error: "Falta correo" });
-  const resultado = await obtenerCodigoFox(email);
-  return res.json(resultado);
 });
 
-app.listen(PORT, () => console.log(`Servidor Fox corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`Servidor Fox API corriendo en puerto ${PORT}`));
