@@ -1,6 +1,5 @@
 const express = require('express');
-const puppeteer = require('puppeteer-core');
-const chromium = require('@sparticuz/chromium');
+const { getLatestMailByEmailAddress } = require('yopmail-helper');
 
 const app = express();
 
@@ -9,49 +8,35 @@ app.get('/codigo-fox', async (req, res) => {
   if (!email) return res.status(400).json({ ok: false, error: "Falta el correo" });
   
   const usuario = email.split('@')[0];
-  let browser = null;
 
   try {
-    browser = await puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless,
-    });
+    let codigoEncontrado = null;
 
-    const page = await browser.newPage();
-    
-    // Disfrazamos al bot de Vercel como un iPhone para evitar bloqueos
-    await page.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1');
-    
-    await page.goto(`https://yopmail.com/es/?login=${usuario}`, { waitUntil: 'networkidle2', timeout: 30000 });
-    await new Promise(r => setTimeout(r, 4000));
+    // Solo 4 intentos muy rápidos para no superar los 10 segundos de Vercel
+    for (let i = 0; i < 4; i++) {
+        let latestMail = null;
+        try { latestMail = await getLatestMailByEmailAddress(usuario); } catch(err) {}
 
-    // Intentamos extraer el texto de la bandeja o del iframe de los mensajes
-    let contenido = "";
-    try {
-        const frameElement = await page.$('#ifmail');
-        if (frameElement) {
-            const frame = await frameElement.contentFrame();
-            contenido = await frame.evaluate(() => document.body.innerText);
-        } else {
-            contenido = await page.evaluate(() => document.body.innerText);
+        if (latestMail) {
+            const correoCrudo = JSON.stringify(latestMail);
+            const matchNumeros = correoCrudo.match(/\b\d{6}\b/g);
+
+            if (matchNumeros && matchNumeros.length > 0) {
+                codigoEncontrado = matchNumeros[0];
+                break;
+            }
         }
-    } catch (e) {
-        contenido = await page.evaluate(() => document.body.innerText);
+        if (i < 3) await new Promise(r => setTimeout(r, 2000));
     }
 
-    // Buscamos exactamente los 6 números del código de Fox
-    let match = contenido.match(/\b\d{6}\b/);
-
-    if (match) {
-        return res.json({ ok: true, code: match[0] });
+    if (codigoEncontrado) {
+        return res.json({ ok: true, code: codigoEncontrado });
     } else {
         return res.json({ ok: false, error: "📭 Aún no llega el correo de Fox. (Solicítalo de nuevo)." });
     }
 
   } catch (err) {
-    return res.json({ ok: false, error: "🔥 Error: " + err.message });
+    return res.json({ ok: false, error: "🔥 Error en API: " + err.message });
   }
 });
 
