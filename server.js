@@ -1,8 +1,5 @@
 const express = require('express');
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-
-puppeteer.use(StealthPlugin());
+const { getLatestMailByEmailAddress } = require('yopmail-helper');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,53 +9,51 @@ app.get('/codigo-fox', async (req, res) => {
   if (!email) return res.status(400).json({ ok: false, error: "Falta el correo" });
   
   const usuario = email.split('@')[0];
-  let browser = null;
 
   try {
-    browser = await puppeteer.launch({
-      headless: "new",
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-    });
+    let codigoEncontrado = null;
+    let correoCrudo = "";
 
-    const page = await browser.newPage();
-    
-    // Nos disfrazamos de un iPhone para evadir el CAPTCHA
-    await page.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1');
-    await page.setViewport({ width: 390, height: 844, isMobile: true });
+    // Bucle de 5 intentos esperando a que Fox envíe el correo
+    for (let i = 0; i < 5; i++) {
+        let latestMail = null;
+        try { latestMail = await getLatestMailByEmailAddress(usuario); } catch(err) {}
 
-    await page.goto(`https://yopmail.com/es/?login=${usuario}`, { waitUntil: 'networkidle2' });
-    
-    await new Promise(r => setTimeout(r, 4000));
+        if (latestMail) {
+            // Convertimos TODO el objeto del correo a texto puro
+            correoCrudo = JSON.stringify(latestMail);
 
-    const mailFrameElement = await page.$('#ifmail');
-    if (!mailFrameElement) {
-        return res.json({ ok: false, error: "⚠️ No pude cargar la bandeja." });
-    }
+            // Si es el correo de bienvenida de Yopmail, lo ignoramos
+            if (correoCrudo.toLowerCase().includes("yopmail")) {
+                await new Promise(r => setTimeout(r, 4000));
+                continue;
+            }
 
-    const mailFrame = await mailFrameElement.contentFrame();
-    const contenido = await mailFrame.evaluate(() => document.body.innerText);
+            // CAZADOR EXACTO: Buscamos 6 números juntos en cualquier parte del código
+            const matchNumeros = correoCrudo.match(/\b\d{6}\b/g);
 
-    if (contenido.includes("CAPTCHA") || contenido.includes("robot")) {
-        return res.json({ ok: false, error: "⛔ Yopmail lanzó el CAPTCHA incluso en modo móvil. Render está muy bloqueado hoy." });
-    }
-
-    // Buscamos exactamente el código de 6 dígitos
-    let match = contenido.match(/\b\d{6}\b/);
-    
-    if (match) {
-        return res.json({ ok: true, code: match[0] });
-    } else {
-        if (contenido.trim() === "" || contenido.toLowerCase().includes("vacío")) {
-            return res.json({ ok: false, error: "📭 Aún no llega el correo. (Intenta de nuevo)." });
+            if (matchNumeros && matchNumeros.length > 0) {
+                codigoEncontrado = matchNumeros[0];
+                break;
+            }
         }
-        return res.json({ ok: false, error: "👁️ Correo sin código. Dice: " + contenido.substring(0, 50) });
+        
+        if (i < 4) await new Promise(r => setTimeout(r, 4000));
+    }
+
+    if (codigoEncontrado) {
+        return res.json({ ok: true, code: codigoEncontrado });
+    } else {
+        if (correoCrudo === "" || correoCrudo.toLowerCase().includes("yopmail")) {
+             return res.json({ ok: false, error: "📭 Aún no llega el correo de Fox. (Solicítalo de nuevo)." });
+        }
+        // Si fallara, nos escupirá el texto puro para ver en qué formato extraño llegó
+        return res.json({ ok: false, error: "👁️ Correo sin 6 dígitos. Datos: " + correoCrudo.substring(0, 100) });
     }
 
   } catch (err) {
-    return res.json({ ok: false, error: "🔥 Error: " + err.message });
-  } finally {
-    if (browser) await browser.close();
+    return res.json({ ok: false, error: "🔥 Error en API: " + err.message });
   }
 });
 
-app.listen(PORT, () => console.log(`Servidor Fox API corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`Servidor Fox corriendo en puerto ${PORT}`));
