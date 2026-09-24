@@ -1,15 +1,13 @@
 {
   "name": "bot-fox",
-  "version": "3.0.0",
-  "description": "Bypass Movil Yopmail",
+  "version": "4.0.0",
+  "description": "API Directa Fox One",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "puppeteer": "^25.11.0",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "yopmail-helper": "^1.0.13"
   }
 }
