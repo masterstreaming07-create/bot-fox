@@ -2,7 +2,6 @@ const express = require('express');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 
-// Activamos el modo anti-bloqueo
 puppeteer.use(StealthPlugin());
 
 const app = express();
@@ -23,17 +22,14 @@ app.get('/codigo-fox', async (req, res) => {
 
     const page = await browser.newPage();
     
-    // EL TRUCO: Nos disfrazamos de un iPhone 14 para que Yopmail no nos ponga CAPTCHA
+    // Nos disfrazamos de un iPhone para evadir el CAPTCHA
     await page.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1');
     await page.setViewport({ width: 390, height: 844, isMobile: true });
 
-    // Entramos directo a la cuenta
     await page.goto(`https://yopmail.com/es/?login=${usuario}`, { waitUntil: 'networkidle2' });
     
-    // Esperamos 4 segundos a que cargue
     await new Promise(r => setTimeout(r, 4000));
 
-    // Buscamos la bandeja
     const mailFrameElement = await page.$('#ifmail');
     if (!mailFrameElement) {
         return res.json({ ok: false, error: "⚠️ No pude cargar la bandeja." });
@@ -46,7 +42,7 @@ app.get('/codigo-fox', async (req, res) => {
         return res.json({ ok: false, error: "⛔ Yopmail lanzó el CAPTCHA incluso en modo móvil. Render está muy bloqueado hoy." });
     }
 
-    // Buscamos exactamente el código de 6 dígitos que vi en tu captura
+    // Buscamos exactamente el código de 6 dígitos
     let match = contenido.match(/\b\d{6}\b/);
     
     if (match) {
