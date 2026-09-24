@@ -1,57 +1,58 @@
 const express = require('express');
-const { getLatestMailByEmailAddress } = require('yopmail-helper');
+const puppeteer = require('puppeteer-core');
+const chromium = require('@sparticuz/chromium');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 app.get('/codigo-fox', async (req, res) => {
   const email = req.query.email;
   if (!email) return res.status(400).json({ ok: false, error: "Falta el correo" });
   
   const usuario = email.split('@')[0];
+  let browser = null;
 
   try {
-    // Aumentamos a 6 intentos (24 segundos de paciencia)
-    for (let i = 0; i < 6; i++) { 
-        let latestMail = null;
-        try {
-            latestMail = await getLatestMailByEmailAddress(usuario);
-        } catch(err) {
-            // Si Yopmail bloquea la API con Cloudflare, lo atrapamos aquí
-            if (i === 5) return res.json({ ok: false, error: "⛔ Bloqueo de API Yopmail: " + err.message });
+    browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+    });
+
+    const page = await browser.newPage();
+    
+    // Disfrazamos al bot de Vercel como un iPhone para evitar bloqueos
+    await page.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1');
+    
+    await page.goto(`https://yopmail.com/es/?login=${usuario}`, { waitUntil: 'networkidle2', timeout: 30000 });
+    await new Promise(r => setTimeout(r, 4000));
+
+    // Intentamos extraer el texto de la bandeja o del iframe de los mensajes
+    let contenido = "";
+    try {
+        const frameElement = await page.$('#ifmail');
+        if (frameElement) {
+            const frame = await frameElement.contentFrame();
+            contenido = await frame.evaluate(() => document.body.innerText);
+        } else {
+            contenido = await page.evaluate(() => document.body.innerText);
         }
-
-        if (latestMail) {
-            const correoCrudo = JSON.stringify(latestMail);
-
-            // Si es el mensaje por defecto de Yopmail, lo ignoramos y seguimos esperando
-            if (correoCrudo.includes("Bienvenido a YOPmail") || correoCrudo.includes("Welcome to YOPmail")) {
-                await new Promise(r => setTimeout(r, 4000));
-                continue;
-            }
-
-            // Buscamos de 4 a 8 dígitos por si Fox cambió el formato
-            const matchNumeros = correoCrudo.match(/\b\d{4,8}\b/g);
-            if (matchNumeros) {
-                const candidatos = matchNumeros.filter(n => !["2023", "2024", "2025", "2026", "2027"].includes(n));
-                if (candidatos.length > 0) {
-                    return res.json({ ok: true, code: candidatos[0] });
-                }
-            }
-
-            // Si llegó un correo de Fox pero no sacó los números, mostramos el texto crudo para verlo
-            return res.json({ ok: false, error: "👁️ Correo detectado sin código: " + correoCrudo.substring(0, 100) });
-        }
-
-        if (i < 5) await new Promise(r => setTimeout(r, 4000));
+    } catch (e) {
+        contenido = await page.evaluate(() => document.body.innerText);
     }
 
-    // Si pasaron los 24 segundos y la API siempre devolvió vacío
-    return res.json({ ok: false, error: "📭 Bandeja totalmente vacía tras 24 segundos. El correo no ha llegado." });
+    // Buscamos exactamente los 6 números del código de Fox
+    let match = contenido.match(/\b\d{6}\b/);
+
+    if (match) {
+        return res.json({ ok: true, code: match[0] });
+    } else {
+        return res.json({ ok: false, error: "📭 Aún no llega el correo de Fox. (Solicítalo de nuevo)." });
+    }
 
   } catch (err) {
-    return res.json({ ok: false, error: "🔥 Error interno del servidor: " + err.message });
+    return res.json({ ok: false, error: "🔥 Error: " + err.message });
   }
 });
 
-app.listen(PORT, () => console.log(`Servidor Fox corriendo en puerto ${PORT}`));
+module.exports = app;
