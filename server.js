@@ -2,9 +2,9 @@ const express = require('express');
 const puppeteer = require('puppeteer');
 
 const app = express();
-const PORT = 3000;
+// Render asigna dinámicamente el puerto en process.env.PORT
+const PORT = process.env.PORT || 3000;
 
-// Función para raspar el código de Yopmail
 async function obtenerCodigoFox(correoCompleto) {
   const usuario = correoCompleto.split('@')[0];
   
@@ -12,41 +12,55 @@ async function obtenerCodigoFox(correoCompleto) {
   try {
     browser = await puppeteer.launch({
       headless: "new",
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: [
+        '--no-sandbox', 
+        '--disable-setuid-sandbox',
+        '--disable-blink-features=AutomationControlled' // Evasión de anti-bots
+      ]
     });
 
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-    // 1. Ir directo a la bandeja de entrada del usuario en Yopmail
-    await page.goto(`https://yopmail.com/es/?login=${encodeURIComponent(usuario)}`, { waitUntil: 'networkidle2' });
+    // 1. Entrar como humano a la página de inicio de Yopmail
+    await page.goto('https://yopmail.com/es/', { waitUntil: 'networkidle2' });
 
-    // 2. Esperar al iframe del correo
-    await page.waitForSelector('#ifmail', { timeout: 15000 });
+    // 2. Escribir el correo en la caja de texto y dar Enter
+    await page.waitForSelector('#login', { timeout: 10000 });
+    await page.type('#login', usuario);
+    await page.keyboard.press('Enter');
+
+    // 3. Darle 3 segundos fijos para que Yopmail cargue la bandeja
+    await new Promise(r => setTimeout(r, 3000));
+
+    // 4. Intentar capturar el iframe del correo (ifmail)
     const mailFrameElement = await page.$('#ifmail');
+    if (!mailFrameElement) {
+      return { ok: false, error: "Bandeja vacía o no cargó el correo." };
+    }
     const mailFrame = await mailFrameElement.contentFrame();
 
-    if (!mailFrame) {
-      return { ok: false, error: "No se pudo cargar el contenedor del correo." };
-    }
-
-    // 3. Extraer el texto completo del cuerpo del correo
+    // 5. Extraer el texto
     const contenido = await mailFrame.evaluate(() => document.body.innerText);
 
-    // 4. Búsqueda prioritaria: número de 4 a 6 dígitos cerca de la palabra "código" o "code"
-    let match = contenido.match(/(?:c[oó]digo|code)[^\d\n\r]{0,30}(\b\d{4,6}\b)/i);
-    let codigoEncontrado = match ? match[1] : null;
+    if (!contenido || contenido.trim() === "") {
+        return { ok: false, error: "El correo está vacío." };
+    }
 
-    // 5. Si no vino con la palabra "código", buscar todos los números de 4 a 6 dígitos ignorando años
-    if (!codigoEncontrado) {
-      const todosLosNumeros = contenido.match(/\b\d{4,6}\b/g) || [];
-      const añosAIgnorar = ["2023", "2024", "2025", "2026", "2027"];
-      
-      // Filtrar números que no sean años comunes
-      const candidatos = todosLosNumeros.filter(num => !añosAIgnorar.includes(num));
-      if (candidatos.length > 0) {
-        codigoEncontrado = candidatos[0];
-      }
+    // 6. Búsqueda inteligente de códigos
+    let codigoEncontrado = null;
+
+    // Buscar código exacto de FOX
+    let matchEspecial = contenido.match(/(?:c[oó]digo|code|pin)[^\d\n\r]{0,30}(\b\d{4,6}\b)/i);
+    if (matchEspecial) {
+        codigoEncontrado = matchEspecial[1];
+    } else {
+        const todosLosNumeros = contenido.match(/\b\d{4,6}\b/g) || [];
+        const añosAIgnorar = ["2023", "2024", "2025", "2026", "2027"];
+        const candidatos = todosLosNumeros.filter(num => !añosAIgnorar.includes(num));
+        if (candidatos.length > 0) {
+            codigoEncontrado = candidatos[0];
+        }
     }
 
     if (codigoEncontrado) {
@@ -56,13 +70,12 @@ async function obtenerCodigoFox(correoCompleto) {
     }
 
   } catch (err) {
-    return { ok: false, error: "Error al consultar Yopmail: " + err.message };
+    return { ok: false, error: "Error interno Puppeteer: " + err.message };
   } finally {
     if (browser) await browser.close();
   }
 }
 
-// Endpoint para que Apps Script consulte el código
 app.get('/codigo-fox', async (req, res) => {
   const email = req.query.email;
   if (!email) {
@@ -75,6 +88,5 @@ app.get('/codigo-fox', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`\n Servidor Fox One corriendo en http://localhost:${PORT}`);
-  console.log(` Listo para procesar correos de Fox One.\n`);
+  console.log(`Servidor Fox One corriendo en puerto ${PORT}`);
 });
