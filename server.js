@@ -1,5 +1,9 @@
 const express = require('express');
-const { getLatestMailByEmailAddress } = require('yopmail-helper');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+
+// Activamos el modo anti-bloqueo
+puppeteer.use(StealthPlugin());
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,59 +13,55 @@ app.get('/codigo-fox', async (req, res) => {
   if (!email) return res.status(400).json({ ok: false, error: "Falta el correo" });
   
   const usuario = email.split('@')[0];
+  let browser = null;
 
   try {
-    let codigoEncontrado = null;
-    let tituloCorreo = "Desconocido";
-    let textoParaMostrar = "";
+    browser = await puppeteer.launch({
+      headless: "new",
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    });
 
-    // Bucle de paciencia: 5 intentos esperando a Fox
-    for (let i = 0; i < 5; i++) {
-        let latestMail = null;
-        try { latestMail = await getLatestMailByEmailAddress(usuario); } catch(err) {}
-        
-        if (latestMail) {
-            tituloCorreo = latestMail.title || latestMail.subject || "Sin asunto";
-            
-            // SOLUCIÓN: Sumamos el Asunto + Cuerpo de texto + Cuerpo HTML (Aquí suele esconderse el código)
-            const contenidoCrudo = tituloCorreo + " " + (latestMail.body || "") + " " + (latestMail.html || "");
-            
-            // Limpiamos etiquetas HTML para que solo queden letras y números
-            const contenidoLimpio = contenidoCrudo.replace(/<[^>]+>/g, ' ').replace(/[^\w\s]/g, ' ');
-            textoParaMostrar = contenidoLimpio;
+    const page = await browser.newPage();
+    
+    // EL TRUCO: Nos disfrazamos de un iPhone 14 para que Yopmail no nos ponga CAPTCHA
+    await page.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1');
+    await page.setViewport({ width: 390, height: 844, isMobile: true });
 
-            // Buscamos estrictamente números de 4 a 8 dígitos
-            const todosLosNumeros = contenidoLimpio.match(/\b\d{4,8}\b/g) || [];
-            const aIgnorar = ["2023", "2024", "2025", "2026", "2027", "2028"];
-            const candidatosNumeros = todosLosNumeros.filter(num => !aIgnorar.includes(num));
-            
-            if (candidatosNumeros.length > 0) {
-                codigoEncontrado = candidatosNumeros[0];
-            }
+    // Entramos directo a la cuenta
+    await page.goto(`https://yopmail.com/es/?login=${usuario}`, { waitUntil: 'networkidle2' });
+    
+    // Esperamos 4 segundos a que cargue
+    await new Promise(r => setTimeout(r, 4000));
 
-            // Si encontró un número y no es la bienvenida de Yopmail
-            if (codigoEncontrado && !tituloCorreo.toLowerCase().includes("yopmail")) {
-                break; 
-            } else {
-                codigoEncontrado = null; 
-            }
-        }
-
-        if (i < 4) await new Promise(r => setTimeout(r, 4000));
+    // Buscamos la bandeja
+    const mailFrameElement = await page.$('#ifmail');
+    if (!mailFrameElement) {
+        return res.json({ ok: false, error: "⚠️ No pude cargar la bandeja." });
     }
 
-    if (codigoEncontrado) {
-        return res.json({ ok: true, code: codigoEncontrado });
+    const mailFrame = await mailFrameElement.contentFrame();
+    const contenido = await mailFrame.evaluate(() => document.body.innerText);
+
+    if (contenido.includes("CAPTCHA") || contenido.includes("robot")) {
+        return res.json({ ok: false, error: "⛔ Yopmail lanzó el CAPTCHA incluso en modo móvil. Render está muy bloqueado hoy." });
+    }
+
+    // Buscamos exactamente el código de 6 dígitos que vi en tu captura
+    let match = contenido.match(/\b\d{6}\b/);
+    
+    if (match) {
+        return res.json({ ok: true, code: match[0] });
     } else {
-        if (tituloCorreo.toLowerCase().includes("yopmail")) {
-             return res.json({ ok: false, error: "📭 Aún no llega el correo de Fox. Intenta de nuevo." });
+        if (contenido.trim() === "" || contenido.toLowerCase().includes("vacío")) {
+            return res.json({ ok: false, error: "📭 Aún no llega el correo. (Intenta de nuevo)." });
         }
-        // AQUI ESTÁ EL TRUCO: Nos mostrará las palabras reales del correo
-        return res.json({ ok: false, error: "👁️ Texto: " + textoParaMostrar.substring(0, 100) });
+        return res.json({ ok: false, error: "👁️ Correo sin código. Dice: " + contenido.substring(0, 50) });
     }
 
   } catch (err) {
-    return res.json({ ok: false, error: "🔥 Error en API: " + err.message });
+    return res.json({ ok: false, error: "🔥 Error: " + err.message });
+  } finally {
+    if (browser) await browser.close();
   }
 });
 
