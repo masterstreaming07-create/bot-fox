@@ -2,8 +2,9 @@
   "name": "bot-fox",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -12,6 +13,8 @@
   "type": "commonjs",
   "dependencies": {
     "express": "^5.2.1",
-    "puppeteer": "^25.11.0"
+    "puppeteer": "^25.11.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   }
 }
