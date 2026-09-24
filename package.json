@@ -1,20 +1,13 @@
 {
   "name": "bot-fox",
-  "version": "1.0.0",
-  "description": "",
+  "version": "2.0.0",
+  "description": "API Directa sin Captcha",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "express": "^5.2.1",
-    "puppeteer": "^25.11.0",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "express": "^4.18.2",
+    "yopmail-helper": "^1.0.13"
   }
 }
